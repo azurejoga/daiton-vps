@@ -1,15 +1,23 @@
 #!/bin/bash
 
-# 0. Encerrar qualquer processo residual do QEMU
+# ==========================================
+# 1. MATAR E LIMPAR TUDO PREVIAMENTE
+# ==========================================
+echo "🧹 Limpando processos e arquivos residuais..."
 pkill -9 -f qemu-system-x86_64 2>/dev/null
+pkill -9 -f sshx 2>/dev/null
 sleep 1
 
-# 1. Preparar diretório de trabalho
+# Instalação forçada de dependências necessárias
+apt-get update -y > /dev/null 2>&1
+apt-get install -y qemu-system-x86 qemu-utils cloud-image-utils wget openssh-client curl > /dev/null 2>&1
+
+# Limpeza dos diretórios e arquivos
+rm -rf /home/daytona/seed.img /home/daytona/user-data /home/daytona/.vps_env
 mkdir -p /home/daytona && cd /home/daytona
-rm -f seed.img user-data
 
 # ==========================================
-# ENTRADA DE DADOS INTERATIVA
+# 2. ENTRADA INTERATIVA DE DADOS (COM SANITIZAÇÃO)
 # ==========================================
 clear
 echo "=========================================="
@@ -17,23 +25,27 @@ echo "    CONFIGURADOR DE VM - INFINITE LABS    "
 echo "=========================================="
 echo ""
 
-read -p "🔹 Digite a RAM em GB (Padrão: 32): " RAM_INPUT
-RAM_GB=${RAM_INPUT:-32}
+read -p "🔹 Digite a RAM em GB (Padrao: 32): " RAM_INPUT
+RAM_GB=$(echo "$RAM_INPUT" | tr -cd '0-9')
+RAM_GB=${RAM_GB:-32}
 
-read -p "🔹 Digite os núcleos de CPU (Padrão: 16): " CPU_INPUT
-CPU_CORES=${CPU_INPUT:-16}
+read -p "🔹 Digite os nucleos de CPU (Padrao: 16): " CPU_INPUT
+CPU_CORES=$(echo "$CPU_INPUT" | tr -cd '0-9')
+CPU_CORES=${CPU_CORES:-16}
 
-read -p "🔹 Digite o espaço extra em Disco em GB (Padrão: 20): " DISK_INPUT
-DISK_ADD=${DISK_INPUT:-20}
+read -p "🔹 Digite o espaco extra em Disco em GB (Padrao: 20): " DISK_INPUT
+DISK_ADD=$(echo "$DISK_INPUT" | tr -cd '0-9')
+DISK_ADD=${DISK_ADD:-20}
 
-read -p "🔹 Digite a porta SSH do Host (Padrão: 2222): " PORT_INPUT
-HOST_PORT=${PORT_INPUT:-2222}
+read -p "🔹 Digite a porta SSH do Host (Padrao: 2222): " PORT_INPUT
+HOST_PORT=$(echo "$PORT_INPUT" | tr -cd '0-9')
+HOST_PORT=${HOST_PORT:-2222}
 
-read -p "🔹 Digite a senha do usuário Root (Padrão: root): " PASS_INPUT
+read -p "🔹 Digite a senha do usuario Root (Padrao: root): " PASS_INPUT
 ROOT_PASS=${PASS_INPUT:-root}
 
 echo ""
-echo "⚙️ Configurações selecionadas:"
+echo "⚙️  Configurações validadas:"
 echo "   - RAM: ${RAM_GB}G"
 echo "   - vCPUs: ${CPU_CORES}"
 echo "   - Disco Extra: +${DISK_ADD}G"
@@ -41,17 +53,20 @@ echo "   - Porta Local SSH: ${HOST_PORT}"
 echo "   - Senha Root: ${ROOT_PASS}"
 echo ""
 
-# 2. Baixar imagem oficial do Ubuntu 22.04 LTS (se ainda não existir)
+# ==========================================
+# 3. PREPARAÇÃO DA IMAGEM E DISCO
+# ==========================================
 if [ ! -f "ubuntu22.qcow2" ]; then
-  echo "📥 Baixando imagem base do Ubuntu..."
+  echo "📥 Baixando imagem base do Ubuntu 22.04 LTS..."
   wget -q --show-progress https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img -O ubuntu22.qcow2
 fi
 
-# Expandir o disco virtual com o valor digitado
 echo "💾 Redimensionando disco..."
-qemu-img resize ubuntu22.qcow2 +${DISK_ADD}G
+qemu-img resize ubuntu22.qcow2 +${DISK_ADD}G > /dev/null 2>&1
 
-# 3. Configurar Cloud-Init liberando Root + Senha no SSH
+# ==========================================
+# 4. CONFIGURAÇÃO DO CLOUD-INIT (ROOT LIBERADO)
+# ==========================================
 cat <<EOF > user-data
 #cloud-config
 disable_root: false
@@ -74,15 +89,16 @@ runcmd:
   - systemctl restart ssh || systemctl restart sshd
 EOF
 
-# 4. Gerar a ISO de inicialização (NoCloud)
-cloud-localds seed.img user-data
+cloud-localds seed.img user-data > /dev/null 2>&1
 
+# ==========================================
+# 5. INICIALIZAÇÃO DA VM
+# ==========================================
 echo "🚀 Iniciando a VM no QEMU..."
 echo "👉 Conecte em outra aba via: ssh -o StrictHostKeyChecking=no root@localhost -p ${HOST_PORT}"
 echo ""
 
-# 5. Iniciar a VM via QEMU com as variáveis digitadas
-qemu-system-x86_64 \
+exec qemu-system-x86_64 \
   -hda /home/daytona/ubuntu22.qcow2 \
   -m ${RAM_GB}G \
   -smp ${CPU_CORES} \
